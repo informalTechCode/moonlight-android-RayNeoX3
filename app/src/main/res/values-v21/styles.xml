@@ -9,6 +9,20 @@
         <!-- API 21 theme customizations can go here. -->
         <item name="android:statusBarColor">#212121</item>
         <item name="android:navigationBarColor">#212121</item>
+        <item name="android:alertDialogTheme">@style/MoonlightAlertDialogTheme</item>
+        <item name="android:dialogTheme">@style/MoonlightDialogTheme</item>
+    </style>
+
+    <style name="MoonlightAlertDialogTheme" parent="android:Theme.Material.Dialog">
+        <item name="android:colorAccent">#80CBC4</item>
+        <item name="android:textColorPrimary">#FFFFFFFF</item>
+        <item name="android:textColorSecondary">#FFD0D0D0</item>
+    </style>
+
+    <style name="MoonlightDialogTheme" parent="android:Theme.Material.Dialog">
+        <item name="android:colorAccent">#80CBC4</item>
+        <item name="android:textColorPrimary">#FFFFFFFF</item>
+        <item name="android:textColorSecondary">#FFD0D0D0</item>
     </style>
 
 </resources>

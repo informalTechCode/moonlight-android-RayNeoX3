@@ -1,5 +1,6 @@
 package com.limelight.binding.input.driver;
 
+import com.limelight.utils.ToastHelper;
 import android.annotation.SuppressLint;
 import android.app.PendingIntent;
 import android.app.Service;
@@ -15,7 +16,6 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.IBinder;
 import android.view.InputDevice;
-import android.widget.Toast;
 
 import com.limelight.LimeLog;
 import com.limelight.R;
@@ -167,7 +167,7 @@ public class UsbDriverService extends Service implements UsbDriverListener {
 
                     usbManager.requestPermission(device, PendingIntent.getBroadcast(UsbDriverService.this, 0, i, intentFlags));
                 } catch (SecurityException e) {
-                    Toast.makeText(this, this.getText(R.string.error_usb_prohibited), Toast.LENGTH_LONG).show();
+                    ToastHelper.show(this, this.getText(R.string.error_usb_prohibited), ToastHelper.LENGTH_LONG);
                     if (stateListener != null) {
                         stateListener.onUsbPermissionPromptCompleted();
                     }
@@ -351,3 +351,4 @@ public class UsbDriverService extends Service implements UsbDriverListener {
         void onUsbPermissionPromptCompleted();
     }
 }
+

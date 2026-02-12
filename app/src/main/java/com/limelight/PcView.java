@@ -1,5 +1,6 @@
 package com.limelight;
 
+import com.limelight.utils.ToastHelper;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.net.UnknownHostException;
@@ -35,29 +36,45 @@ import android.content.ComponentName;
 import android.content.Intent;
 import android.content.ServiceConnection;
 import android.content.res.Configuration;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.PixelFormat;
+import android.graphics.Rect;
 import android.opengl.GLSurfaceView;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.preference.PreferenceManager;
 import android.view.ContextMenu;
+import android.view.Gravity;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.PixelCopy;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
+import android.view.ViewGroup;
 import android.view.View;
 import android.view.ContextMenu.ContextMenuInfo;
 import android.view.View.OnClickListener;
 import android.widget.AbsListView;
 import android.widget.AdapterView;
 import android.widget.AdapterView.OnItemClickListener;
+import android.widget.FrameLayout;
 import android.widget.ImageButton;
+import android.widget.LinearLayout;
 import android.widget.RelativeLayout;
-import android.widget.Toast;
+import android.widget.TextView;
 import android.widget.AdapterView.AdapterContextMenuInfo;
+import android.util.TypedValue;
 
 import org.xmlpull.v1.XmlPullParserException;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
+import java.util.ArrayList;
 
 public class PcView extends Activity implements AdapterFragmentCallbacks {
     private RelativeLayout noPcFoundLayout;
@@ -119,9 +136,47 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     private final static int FULL_APP_LIST_ID = 9;
     private final static int TEST_NETWORK_ID = 10;
     private final static int GAMESTREAM_EOL_ID = 11;
+    private static final int EYE_WIDTH_PX = 640;
+    private static final int EYE_HEIGHT_PX = 480;
+    private static final long RIGHT_EYE_MIRROR_FRAME_DELAY_MS = 16;
+    private View pcMenuOverlay;
+
+    private FrameLayout stereoRoot;
+    private FrameLayout leftEyeContainer;
+    private SurfaceView rightEyeSurfaceView;
+    private final Handler rightEyeMirrorHandler = new Handler(Looper.getMainLooper());
+    private final Rect leftEyeCaptureRect = new Rect();
+    private Bitmap rightEyeBitmap;
+    private boolean rightEyeMirrorActive;
+    private boolean rightEyeCopyInProgress;
+    private final Runnable rightEyeMirrorRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!rightEyeMirrorActive) {
+                return;
+            }
+
+            mirrorLeftEyeToRightEye();
+            rightEyeMirrorHandler.postDelayed(this, RIGHT_EYE_MIRROR_FRAME_DELAY_MS);
+        }
+    };
+
+    private static final class PcMenuItem {
+        final int id;
+        final String label;
+
+        PcMenuItem(int id, String label) {
+            this.id = id;
+            this.label = label;
+        }
+    }
 
     private void initializeViews() {
+        stopRightEyeMirroring();
+        recycleRightEyeBitmap();
         setContentView(R.layout.activity_pc_view);
+
+        setupStereoMirroring();
 
         UiHelper.notifyNewRootView(this);
 
@@ -180,6 +235,194 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
             noPcFoundLayout.setVisibility(View.INVISIBLE);
         }
         pcGridAdapter.notifyDataSetChanged();
+    }
+
+    private void setupStereoMirroring() {
+        stereoRoot = findViewById(R.id.stereoRoot);
+        leftEyeContainer = findViewById(R.id.leftEyeContainer);
+        rightEyeSurfaceView = findViewById(R.id.rightEyeSurfaceView);
+
+        if (stereoRoot == null || leftEyeContainer == null || rightEyeSurfaceView == null) {
+            return;
+        }
+
+        rightEyeSurfaceView.setClickable(false);
+        rightEyeSurfaceView.setFocusable(false);
+        rightEyeSurfaceView.getHolder().setFormat(PixelFormat.RGBA_8888);
+        rightEyeSurfaceView.getHolder().addCallback(new SurfaceHolder.Callback() {
+            @Override
+            public void surfaceCreated(SurfaceHolder holder) {
+                ensureRightEyeBitmap();
+                startRightEyeMirroring();
+            }
+
+            @Override
+            public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+                ensureRightEyeBitmap();
+            }
+
+            @Override
+            public void surfaceDestroyed(SurfaceHolder holder) {
+                stopRightEyeMirroring();
+                recycleRightEyeBitmap();
+            }
+        });
+
+        stereoRoot.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+            @Override
+            public void onLayoutChange(View v, int left, int top, int right, int bottom,
+                                       int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                applyStereoLayout();
+            }
+        });
+
+        stereoRoot.post(new Runnable() {
+            @Override
+            public void run() {
+                applyStereoLayout();
+                startRightEyeMirroring();
+            }
+        });
+    }
+
+    private void applyStereoLayout() {
+        if (stereoRoot == null || leftEyeContainer == null || rightEyeSurfaceView == null) {
+            return;
+        }
+
+        int totalStereoWidth = EYE_WIDTH_PX * 2;
+        int leftMargin = Math.max(0, (stereoRoot.getWidth() - totalStereoWidth) / 2);
+        int topMargin = Math.max(0, (stereoRoot.getHeight() - EYE_HEIGHT_PX) / 2);
+
+        FrameLayout.LayoutParams leftParams = (FrameLayout.LayoutParams) leftEyeContainer.getLayoutParams();
+        leftParams.width = EYE_WIDTH_PX;
+        leftParams.height = EYE_HEIGHT_PX;
+        leftParams.leftMargin = leftMargin;
+        leftParams.topMargin = topMargin;
+        leftEyeContainer.setLayoutParams(leftParams);
+
+        FrameLayout.LayoutParams rightParams = (FrameLayout.LayoutParams) rightEyeSurfaceView.getLayoutParams();
+        rightParams.width = EYE_WIDTH_PX;
+        rightParams.height = EYE_HEIGHT_PX;
+        rightParams.leftMargin = leftMargin + EYE_WIDTH_PX;
+        rightParams.topMargin = topMargin;
+        rightEyeSurfaceView.setLayoutParams(rightParams);
+    }
+
+    private void ensureRightEyeBitmap() {
+        if (rightEyeSurfaceView == null) {
+            return;
+        }
+
+        int width = rightEyeSurfaceView.getWidth() > 0 ? rightEyeSurfaceView.getWidth() : EYE_WIDTH_PX;
+        int height = rightEyeSurfaceView.getHeight() > 0 ? rightEyeSurfaceView.getHeight() : EYE_HEIGHT_PX;
+
+        if (rightEyeBitmap != null &&
+                !rightEyeBitmap.isRecycled() &&
+                rightEyeBitmap.getWidth() == width &&
+                rightEyeBitmap.getHeight() == height) {
+            return;
+        }
+
+        recycleRightEyeBitmap();
+        rightEyeBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+    }
+
+    private void startRightEyeMirroring() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+
+        if (rightEyeSurfaceView == null || !rightEyeSurfaceView.getHolder().getSurface().isValid()) {
+            return;
+        }
+
+        if (rightEyeMirrorActive) {
+            return;
+        }
+
+        rightEyeMirrorActive = true;
+        rightEyeCopyInProgress = false;
+        rightEyeMirrorHandler.removeCallbacks(rightEyeMirrorRunnable);
+        rightEyeMirrorHandler.post(rightEyeMirrorRunnable);
+    }
+
+    private void stopRightEyeMirroring() {
+        rightEyeMirrorActive = false;
+        rightEyeCopyInProgress = false;
+        rightEyeMirrorHandler.removeCallbacks(rightEyeMirrorRunnable);
+    }
+
+    private void recycleRightEyeBitmap() {
+        if (rightEyeBitmap != null && !rightEyeBitmap.isRecycled()) {
+            rightEyeBitmap.recycle();
+        }
+        rightEyeBitmap = null;
+    }
+
+    private void mirrorLeftEyeToRightEye() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+
+        if (!rightEyeMirrorActive || rightEyeCopyInProgress) {
+            return;
+        }
+
+        if (leftEyeContainer == null || rightEyeSurfaceView == null) {
+            return;
+        }
+
+        if (!rightEyeSurfaceView.getHolder().getSurface().isValid()) {
+            return;
+        }
+
+        int[] location = new int[2];
+        leftEyeContainer.getLocationInWindow(location);
+        leftEyeCaptureRect.set(
+                location[0],
+                location[1],
+                location[0] + leftEyeContainer.getWidth(),
+                location[1] + leftEyeContainer.getHeight()
+        );
+
+        if (leftEyeCaptureRect.isEmpty()) {
+            return;
+        }
+
+        ensureRightEyeBitmap();
+        if (rightEyeBitmap == null || rightEyeBitmap.isRecycled()) {
+            return;
+        }
+
+        rightEyeCopyInProgress = true;
+        final Bitmap targetBitmap = rightEyeBitmap;
+        try {
+            PixelCopy.request(getWindow(), leftEyeCaptureRect, targetBitmap, copyResult -> {
+                try {
+                    if (copyResult != PixelCopy.SUCCESS || !rightEyeMirrorActive) {
+                        return;
+                    }
+
+                    Canvas canvas = null;
+                    try {
+                        canvas = rightEyeSurfaceView.getHolder().lockCanvas();
+                        if (canvas != null) {
+                            canvas.drawBitmap(targetBitmap, 0f, 0f, null);
+                        }
+                    } finally {
+                        if (canvas != null) {
+                            rightEyeSurfaceView.getHolder().unlockCanvasAndPost(canvas);
+                        }
+                    }
+                } finally {
+                    rightEyeCopyInProgress = false;
+                }
+            }, rightEyeMirrorHandler);
+        } catch (IllegalArgumentException e) {
+            rightEyeCopyInProgress = false;
+            LimeLog.warning("PcView PixelCopy failed: " + e.getMessage());
+        }
     }
 
     @Override
@@ -292,6 +535,9 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
 
     @Override
     public void onDestroy() {
+        stopRightEyeMirroring();
+        recycleRightEyeBitmap();
+
         super.onDestroy();
 
         if (managerBinder != null) {
@@ -303,6 +549,8 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     protected void onResume() {
         super.onResume();
 
+        startRightEyeMirroring();
+
         // Display a decoder crash notification if we've returned after a crash
         UiHelper.showDecoderCrashDialog(this);
 
@@ -312,6 +560,8 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
 
     @Override
     protected void onPause() {
+        stopRightEyeMirroring();
+
         super.onPause();
 
         inForeground = false;
@@ -322,7 +572,205 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     protected void onStop() {
         super.onStop();
 
+        dismissPcMenuOverlay();
         Dialog.closeDialogs();
+    }
+
+    private int dp(int value) {
+        return (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, value, getResources().getDisplayMetrics());
+    }
+
+    private void dismissPcMenuOverlay() {
+        if (pcMenuOverlay != null) {
+            ViewGroup parent = (ViewGroup) pcMenuOverlay.getParent();
+            if (parent != null) {
+                parent.removeView(pcMenuOverlay);
+            }
+            pcMenuOverlay = null;
+        }
+    }
+
+    private ArrayList<PcMenuItem> buildPcMenuItems(ComputerObject computer) {
+        ArrayList<PcMenuItem> items = new ArrayList<>();
+
+        if (computer.details.state == ComputerDetails.State.OFFLINE ||
+                computer.details.state == ComputerDetails.State.UNKNOWN) {
+            items.add(new PcMenuItem(WOL_ID, getResources().getString(R.string.pcview_menu_send_wol)));
+            items.add(new PcMenuItem(GAMESTREAM_EOL_ID, getResources().getString(R.string.pcview_menu_eol)));
+        }
+        else if (computer.details.pairState != PairState.PAIRED) {
+            items.add(new PcMenuItem(PAIR_ID, getResources().getString(R.string.pcview_menu_pair_pc)));
+            if (computer.details.nvidiaServer) {
+                items.add(new PcMenuItem(GAMESTREAM_EOL_ID, getResources().getString(R.string.pcview_menu_eol)));
+            }
+        }
+        else {
+            if (computer.details.runningGameId != 0) {
+                items.add(new PcMenuItem(RESUME_ID, getResources().getString(R.string.applist_menu_resume)));
+                items.add(new PcMenuItem(QUIT_ID, getResources().getString(R.string.applist_menu_quit)));
+            }
+
+            if (computer.details.nvidiaServer) {
+                items.add(new PcMenuItem(GAMESTREAM_EOL_ID, getResources().getString(R.string.pcview_menu_eol)));
+            }
+
+            items.add(new PcMenuItem(FULL_APP_LIST_ID, getResources().getString(R.string.pcview_menu_app_list)));
+        }
+
+        items.add(new PcMenuItem(TEST_NETWORK_ID, getResources().getString(R.string.pcview_menu_test_network)));
+        items.add(new PcMenuItem(DELETE_ID, getResources().getString(R.string.pcview_menu_delete_pc)));
+        items.add(new PcMenuItem(VIEW_DETAILS_ID, getResources().getString(R.string.pcview_menu_details)));
+        return items;
+    }
+
+    private void showPcMenuOverlay(final ComputerObject computer) {
+        stopComputerUpdates(false);
+        dismissPcMenuOverlay();
+
+        FrameLayout leftContainer = findViewById(R.id.leftEyeContainer);
+        if (leftContainer == null) {
+            startComputerUpdates();
+            return;
+        }
+
+        FrameLayout scrim = new FrameLayout(this);
+        scrim.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        scrim.setBackgroundColor(0x88000000);
+        scrim.setClickable(true);
+
+        LinearLayout panel = new LinearLayout(this);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackgroundColor(Color.parseColor("#4A4A4A"));
+        panel.setPadding(dp(18), dp(14), dp(18), dp(14));
+        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT);
+        panelParams.gravity = Gravity.CENTER;
+        panelParams.leftMargin = dp(40);
+        panelParams.rightMargin = dp(40);
+        panel.setLayoutParams(panelParams);
+
+        String headerTitle = computer.details.name + " - ";
+        switch (computer.details.state) {
+            case ONLINE:
+                headerTitle += getResources().getString(R.string.pcview_menu_header_online);
+                break;
+            case OFFLINE:
+                headerTitle += getResources().getString(R.string.pcview_menu_header_offline);
+                break;
+            case UNKNOWN:
+                headerTitle += getResources().getString(R.string.pcview_menu_header_unknown);
+                break;
+        }
+
+        TextView header = new TextView(this);
+        header.setText(headerTitle);
+        header.setTextColor(Color.WHITE);
+        header.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        panel.addView(header);
+
+        ArrayList<PcMenuItem> items = buildPcMenuItems(computer);
+        for (final PcMenuItem item : items) {
+            TextView row = new TextView(this);
+            row.setText(item.label);
+            row.setTextColor(Color.WHITE);
+            row.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+            row.setPadding(0, dp(12), 0, dp(12));
+            row.setClickable(true);
+            row.setFocusable(true);
+            row.setOnClickListener(v -> {
+                dismissPcMenuOverlay();
+                onPcMenuItemSelected(item.id, computer);
+                startComputerUpdates();
+            });
+            panel.addView(row);
+        }
+
+        scrim.setOnClickListener(v -> {
+            dismissPcMenuOverlay();
+            startComputerUpdates();
+        });
+
+        scrim.addView(panel);
+        leftContainer.addView(scrim);
+        pcMenuOverlay = scrim;
+    }
+
+    private boolean onPcMenuItemSelected(int itemId, final ComputerObject computer) {
+        switch (itemId) {
+            case PAIR_ID:
+                doPair(computer.details);
+                return true;
+
+            case UNPAIR_ID:
+                doUnpair(computer.details);
+                return true;
+
+            case WOL_ID:
+                doWakeOnLan(computer.details);
+                return true;
+
+            case DELETE_ID:
+                if (ActivityManager.isUserAMonkey()) {
+                    LimeLog.info("Ignoring delete PC request from monkey");
+                    return true;
+                }
+                UiHelper.displayDeletePcConfirmationDialog(this, computer.details, new Runnable() {
+                    @Override
+                    public void run() {
+                        if (managerBinder == null) {
+                            ToastHelper.show(PcView.this, getResources().getString(R.string.error_manager_not_running), ToastHelper.LENGTH_LONG);
+                            return;
+                        }
+                        removeComputer(computer.details);
+                    }
+                }, null);
+                return true;
+
+            case FULL_APP_LIST_ID:
+                doAppList(computer.details, false, true);
+                return true;
+
+            case RESUME_ID:
+                if (managerBinder == null) {
+                    ToastHelper.show(PcView.this, getResources().getString(R.string.error_manager_not_running), ToastHelper.LENGTH_LONG);
+                    return true;
+                }
+                ServerHelper.doStart(this, new NvApp("app", computer.details.runningGameId, false), computer.details, managerBinder);
+                return true;
+
+            case QUIT_ID:
+                if (managerBinder == null) {
+                    ToastHelper.show(PcView.this, getResources().getString(R.string.error_manager_not_running), ToastHelper.LENGTH_LONG);
+                    return true;
+                }
+                UiHelper.displayQuitConfirmationDialog(this, new Runnable() {
+                    @Override
+                    public void run() {
+                        ServerHelper.doQuit(PcView.this, computer.details,
+                                new NvApp("app", 0, false), managerBinder, null);
+                    }
+                }, null);
+                return true;
+
+            case VIEW_DETAILS_ID:
+                Dialog.displayDialog(PcView.this, getResources().getString(R.string.title_details), computer.details.toString(), false);
+                return true;
+
+            case TEST_NETWORK_ID:
+                ServerHelper.doNetworkTest(PcView.this);
+                return true;
+
+            case GAMESTREAM_EOL_ID:
+                HelpLauncher.launchGameStreamEolFaq(PcView.this);
+                return true;
+
+            default:
+                return false;
+        }
     }
 
     @Override
@@ -394,15 +842,15 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
 
     private void doPair(final ComputerDetails computer) {
         if (computer.state == ComputerDetails.State.OFFLINE || computer.activeAddress == null) {
-            Toast.makeText(PcView.this, getResources().getString(R.string.pair_pc_offline), Toast.LENGTH_SHORT).show();
+            ToastHelper.show(PcView.this, getResources().getString(R.string.pair_pc_offline), ToastHelper.LENGTH_SHORT);
             return;
         }
         if (managerBinder == null) {
-            Toast.makeText(PcView.this, getResources().getString(R.string.error_manager_not_running), Toast.LENGTH_LONG).show();
+            ToastHelper.show(PcView.this, getResources().getString(R.string.error_manager_not_running), ToastHelper.LENGTH_LONG);
             return;
         }
 
-        Toast.makeText(PcView.this, getResources().getString(R.string.pairing), Toast.LENGTH_SHORT).show();
+        ToastHelper.show(PcView.this, getResources().getString(R.string.pairing), ToastHelper.LENGTH_SHORT);
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -480,7 +928,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                     @Override
                     public void run() {
                         if (toastMessage != null) {
-                            Toast.makeText(PcView.this, toastMessage, Toast.LENGTH_LONG).show();
+                            ToastHelper.show(PcView.this, toastMessage, ToastHelper.LENGTH_LONG);
                         }
 
                         if (toastSuccess) {
@@ -499,12 +947,12 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
 
     private void doWakeOnLan(final ComputerDetails computer) {
         if (computer.state == ComputerDetails.State.ONLINE) {
-            Toast.makeText(PcView.this, getResources().getString(R.string.wol_pc_online), Toast.LENGTH_SHORT).show();
+            ToastHelper.show(PcView.this, getResources().getString(R.string.wol_pc_online), ToastHelper.LENGTH_SHORT);
             return;
         }
 
         if (computer.macAddress == null) {
-            Toast.makeText(PcView.this, getResources().getString(R.string.wol_no_mac), Toast.LENGTH_SHORT).show();
+            ToastHelper.show(PcView.this, getResources().getString(R.string.wol_no_mac), ToastHelper.LENGTH_SHORT);
             return;
         }
 
@@ -523,7 +971,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        Toast.makeText(PcView.this, toastMessage, Toast.LENGTH_LONG).show();
+                        ToastHelper.show(PcView.this, toastMessage, ToastHelper.LENGTH_LONG);
                     }
                 });
             }
@@ -532,15 +980,15 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
 
     private void doUnpair(final ComputerDetails computer) {
         if (computer.state == ComputerDetails.State.OFFLINE || computer.activeAddress == null) {
-            Toast.makeText(PcView.this, getResources().getString(R.string.error_pc_offline), Toast.LENGTH_SHORT).show();
+            ToastHelper.show(PcView.this, getResources().getString(R.string.error_pc_offline), ToastHelper.LENGTH_SHORT);
             return;
         }
         if (managerBinder == null) {
-            Toast.makeText(PcView.this, getResources().getString(R.string.error_manager_not_running), Toast.LENGTH_LONG).show();
+            ToastHelper.show(PcView.this, getResources().getString(R.string.error_manager_not_running), ToastHelper.LENGTH_LONG);
             return;
         }
 
-        Toast.makeText(PcView.this, getResources().getString(R.string.unpairing), Toast.LENGTH_SHORT).show();
+        ToastHelper.show(PcView.this, getResources().getString(R.string.unpairing), ToastHelper.LENGTH_SHORT);
         new Thread(new Runnable() {
             @Override
             public void run() {
@@ -575,7 +1023,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                 runOnUiThread(new Runnable() {
                     @Override
                     public void run() {
-                        Toast.makeText(PcView.this, toastMessage, Toast.LENGTH_LONG).show();
+                        ToastHelper.show(PcView.this, toastMessage, ToastHelper.LENGTH_LONG);
                     }
                 });
             }
@@ -584,11 +1032,11 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
 
     private void doAppList(ComputerDetails computer, boolean newlyPaired, boolean showHiddenGames) {
         if (computer.state == ComputerDetails.State.OFFLINE) {
-            Toast.makeText(PcView.this, getResources().getString(R.string.error_pc_offline), Toast.LENGTH_SHORT).show();
+            ToastHelper.show(PcView.this, getResources().getString(R.string.error_pc_offline), ToastHelper.LENGTH_SHORT);
             return;
         }
         if (managerBinder == null) {
-            Toast.makeText(PcView.this, getResources().getString(R.string.error_manager_not_running), Toast.LENGTH_LONG).show();
+            ToastHelper.show(PcView.this, getResources().getString(R.string.error_manager_not_running), ToastHelper.LENGTH_LONG);
             return;
         }
 
@@ -604,80 +1052,10 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     public boolean onContextItemSelected(MenuItem item) {
         AdapterContextMenuInfo info = (AdapterContextMenuInfo) item.getMenuInfo();
         final ComputerObject computer = (ComputerObject) pcGridAdapter.getItem(info.position);
-        switch (item.getItemId()) {
-            case PAIR_ID:
-                doPair(computer.details);
-                return true;
-
-            case UNPAIR_ID:
-                doUnpair(computer.details);
-                return true;
-
-            case WOL_ID:
-                doWakeOnLan(computer.details);
-                return true;
-
-            case DELETE_ID:
-                if (ActivityManager.isUserAMonkey()) {
-                    LimeLog.info("Ignoring delete PC request from monkey");
-                    return true;
-                }
-                UiHelper.displayDeletePcConfirmationDialog(this, computer.details, new Runnable() {
-                    @Override
-                    public void run() {
-                        if (managerBinder == null) {
-                            Toast.makeText(PcView.this, getResources().getString(R.string.error_manager_not_running), Toast.LENGTH_LONG).show();
-                            return;
-                        }
-                        removeComputer(computer.details);
-                    }
-                }, null);
-                return true;
-
-            case FULL_APP_LIST_ID:
-                doAppList(computer.details, false, true);
-                return true;
-
-            case RESUME_ID:
-                if (managerBinder == null) {
-                    Toast.makeText(PcView.this, getResources().getString(R.string.error_manager_not_running), Toast.LENGTH_LONG).show();
-                    return true;
-                }
-
-                ServerHelper.doStart(this, new NvApp("app", computer.details.runningGameId, false), computer.details, managerBinder);
-                return true;
-
-            case QUIT_ID:
-                if (managerBinder == null) {
-                    Toast.makeText(PcView.this, getResources().getString(R.string.error_manager_not_running), Toast.LENGTH_LONG).show();
-                    return true;
-                }
-
-                // Display a confirmation dialog first
-                UiHelper.displayQuitConfirmationDialog(this, new Runnable() {
-                    @Override
-                    public void run() {
-                        ServerHelper.doQuit(PcView.this, computer.details,
-                                new NvApp("app", 0, false), managerBinder, null);
-                    }
-                }, null);
-                return true;
-
-            case VIEW_DETAILS_ID:
-                Dialog.displayDialog(PcView.this, getResources().getString(R.string.title_details), computer.details.toString(), false);
-                return true;
-
-            case TEST_NETWORK_ID:
-                ServerHelper.doNetworkTest(PcView.this);
-                return true;
-
-            case GAMESTREAM_EOL_ID:
-                HelpLauncher.launchGameStreamEolFaq(PcView.this);
-                return true;
-
-            default:
-                return super.onContextItemSelected(item);
+        if (onPcMenuItemSelected(item.getItemId(), computer)) {
+            return true;
         }
+        return super.onContextItemSelected(item);
     }
     
     private void removeComputer(ComputerDetails details) {
@@ -756,8 +1134,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                 ComputerObject computer = (ComputerObject) pcGridAdapter.getItem(pos);
                 if (computer.details.state == ComputerDetails.State.UNKNOWN ||
                     computer.details.state == ComputerDetails.State.OFFLINE) {
-                    // Open the context menu if a PC is offline or refreshing
-                    openContextMenu(arg1);
+                    showPcMenuOverlay(computer);
                 } else if (computer.details.pairState != PairState.PAIRED) {
                     // Pair an unpaired machine by default
                     doPair(computer.details);
@@ -766,8 +1143,17 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
                 }
             }
         });
+        listView.setOnItemLongClickListener(new AdapterView.OnItemLongClickListener() {
+            @Override
+            public boolean onItemLongClick(AdapterView<?> parent, View view, int position, long id) {
+                ComputerObject computer = (ComputerObject) pcGridAdapter.getItem(position);
+                showPcMenuOverlay(computer);
+                return true;
+            }
+        });
         UiHelper.applyStatusBarPadding(listView);
-        registerForContextMenu(listView);
+        // Keep this in-layout to avoid system window dialogs/menus.
+        listView.requestFocus();
     }
 
     public static class ComputerObject {
@@ -786,3 +1172,4 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         }
     }
 }
+

@@ -7,6 +7,18 @@
     -->
     <style name="AppBaseTheme" parent="android:Theme.Holo">
         <!-- API 14 theme customizations can go here. -->
+        <item name="android:alertDialogTheme">@style/MoonlightAlertDialogTheme</item>
+        <item name="android:dialogTheme">@style/MoonlightDialogTheme</item>
+    </style>
+
+    <style name="MoonlightAlertDialogTheme" parent="android:Theme.Holo.Dialog">
+        <item name="android:textColorPrimary">#FFFFFFFF</item>
+        <item name="android:textColorSecondary">#FFD0D0D0</item>
+    </style>
+
+    <style name="MoonlightDialogTheme" parent="android:Theme.Holo.Dialog">
+        <item name="android:textColorPrimary">#FFFFFFFF</item>
+        <item name="android:textColorSecondary">#FFD0D0D0</item>
     </style>
 
 </resources>

@@ -4,15 +4,20 @@
 
 package com.limelight.binding.input.virtual_controller;
 
-import android.app.AlertDialog;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.graphics.Canvas;
+import android.graphics.Color;
 import android.graphics.Paint;
 import android.util.DisplayMetrics;
+import android.util.TypedValue;
+import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
+import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -172,54 +177,71 @@ public abstract class VirtualControllerElement extends View {
     }
 
     protected void showConfigurationDialog() {
-        AlertDialog.Builder alertBuilder = new AlertDialog.Builder(getContext());
+        View root = getRootView();
+        if (!(root instanceof ViewGroup)) {
+            return;
+        }
 
-        alertBuilder.setTitle("Configuration");
+        final ViewGroup container = (ViewGroup) root;
 
-        CharSequence functions[] = new CharSequence[]{
-                "Move",
-                "Resize",
-            /*election
-            "Set n
-            Disable color sormal color",
-            "Set pressed color",
-            */
-                "Cancel"
-        };
+        final FrameLayout scrim = new FrameLayout(getContext());
+        scrim.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        scrim.setBackgroundColor(0xB0000000);
+        scrim.setClickable(true);
+        scrim.setFocusable(true);
 
-        alertBuilder.setItems(functions, new DialogInterface.OnClickListener() {
+        LinearLayout panel = new LinearLayout(getContext());
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackgroundColor(Color.parseColor("#424242"));
+        panel.setPadding(dp(20), dp(16), dp(20), dp(12));
 
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                switch (which) {
-                    case 0: { // move
-                        actionEnableMove();
-                        break;
-                    }
-                    case 1: { // resize
-                        actionEnableResize();
-                        break;
-                    }
-                /*
-                case 2: { // set default color
-                    actionShowNormalColorChooser();
-                    break;
-                }
-                case 3: { // set pressed color
-                    actionShowPressedColorChooser();
-                    break;
-                }
-                */
-                    default: { // cancel
-                        actionCancel();
-                        break;
-                    }
-                }
-            }
+        int panelWidth = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 420,
+                getResources().getDisplayMetrics());
+        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
+                panelWidth, ViewGroup.LayoutParams.WRAP_CONTENT);
+        panelParams.gravity = Gravity.CENTER;
+        panel.setLayoutParams(panelParams);
+
+        TextView titleView = new TextView(getContext());
+        titleView.setText("Configuration");
+        titleView.setTextColor(Color.WHITE);
+        titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        panel.addView(titleView);
+
+        Button moveButton = new Button(getContext());
+        moveButton.setText("Move");
+        moveButton.setOnClickListener(v -> {
+            container.removeView(scrim);
+            actionEnableMove();
         });
-        AlertDialog alert = alertBuilder.create();
-        // show menu
-        alert.show();
+        panel.addView(moveButton);
+
+        Button resizeButton = new Button(getContext());
+        resizeButton.setText("Resize");
+        resizeButton.setOnClickListener(v -> {
+            container.removeView(scrim);
+            actionEnableResize();
+        });
+        panel.addView(resizeButton);
+
+        Button cancelButton = new Button(getContext());
+        cancelButton.setText("Cancel");
+        cancelButton.setOnClickListener(v -> {
+            container.removeView(scrim);
+            actionCancel();
+        });
+        panel.addView(cancelButton);
+
+        scrim.addView(panel);
+        container.addView(scrim);
+        moveButton.requestFocus();
+    }
+
+    private int dp(int value) {
+        return (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, value, getResources().getDisplayMetrics());
     }
 
     @Override

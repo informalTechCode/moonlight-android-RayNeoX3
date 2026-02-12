@@ -1,5 +1,6 @@
 package com.limelight.preferences;
 
+import com.limelight.utils.ToastHelper;
 import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.InetAddress;
@@ -21,6 +22,7 @@ import com.limelight.nvstream.jni.MoonBridge;
 import com.limelight.utils.Dialog;
 import com.limelight.utils.ServerHelper;
 import com.limelight.utils.SpinnerDialog;
+import com.limelight.utils.StereoMirrorController;
 import com.limelight.utils.UiHelper;
 
 import android.app.Activity;
@@ -36,10 +38,10 @@ import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.TextView;
-import android.widget.Toast;
 
 public class AddComputerManually extends Activity {
     private TextView hostText;
+    private StereoMirrorController stereoMirrorController;
     private ComputerManagerService.ComputerManagerBinder managerBinder;
     private final LinkedBlockingQueue<String> computersToAdd = new LinkedBlockingQueue<>();
     private Thread addThread;
@@ -197,7 +199,7 @@ public class AddComputerManually extends Activity {
             AddComputerManually.this.runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                Toast.makeText(AddComputerManually.this, getResources().getString(R.string.addpc_success), Toast.LENGTH_LONG).show();
+                ToastHelper.show(AddComputerManually.this, getResources().getString(R.string.addpc_success), ToastHelper.LENGTH_LONG);
 
                 if (!isFinishing()) {
                     // Close the activity
@@ -256,6 +258,11 @@ public class AddComputerManually extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (stereoMirrorController != null) {
+            stereoMirrorController.release();
+            stereoMirrorController = null;
+        }
+
         super.onDestroy();
 
         if (managerBinder != null) {
@@ -271,6 +278,7 @@ public class AddComputerManually extends Activity {
         UiHelper.setLocale(this);
 
         setContentView(R.layout.activity_add_computer_manually);
+        stereoMirrorController = StereoMirrorController.attach(this);
 
         UiHelper.notifyNewRootView(this);
 
@@ -313,11 +321,28 @@ public class AddComputerManually extends Activity {
         String hostAddress = hostText.getText().toString().trim();
 
         if (hostAddress.length() == 0) {
-            Toast.makeText(AddComputerManually.this, getResources().getString(R.string.addpc_enter_ip), Toast.LENGTH_LONG).show();
+            ToastHelper.show(AddComputerManually.this, getResources().getString(R.string.addpc_enter_ip), ToastHelper.LENGTH_LONG);
             return true;
         }
 
         computersToAdd.add(hostAddress);
         return false;
     }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (stereoMirrorController != null) {
+            stereoMirrorController.start();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        if (stereoMirrorController != null) {
+            stereoMirrorController.stop();
+        }
+        super.onPause();
+    }
 }
+

@@ -1,5 +1,6 @@
 package com.limelight;
 
+import com.limelight.utils.ToastHelper;
 
 import com.limelight.binding.PlatformBinding;
 import com.limelight.binding.audio.AndroidAudioRenderer;
@@ -50,6 +51,9 @@ import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.PixelFormat;
 import android.graphics.Point;
 import android.graphics.Rect;
 import android.hardware.input.InputManager;
@@ -60,14 +64,17 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.util.Rational;
 import android.view.Display;
 import android.view.InputDevice;
 import android.view.KeyCharacterMap;
 import android.view.KeyEvent;
 import android.view.MotionEvent;
+import android.view.PixelCopy;
 import android.view.Surface;
 import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.View;
 import android.view.View.OnGenericMotionListener;
 import android.view.View.OnSystemUiVisibilityChangeListener;
@@ -77,7 +84,6 @@ import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.view.inputmethod.InputMethodManager;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import java.io.ByteArrayInputStream;
 import java.lang.reflect.InvocationTargetException;
@@ -108,6 +114,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private static final int STYLUS_UP_DEAD_ZONE_RADIUS = 50;
 
     private static final int THREE_FINGER_TAP_THRESHOLD = 300;
+    private static final int EYE_WIDTH_PX = 640;
+    private static final int EYE_HEIGHT_PX = 480;
+    private static final long RIGHT_EYE_MIRROR_FRAME_DELAY_MS = 16;
 
     private ControllerHandler controllerHandler;
     private KeyboardTranslator keyboardTranslator;
@@ -137,6 +146,25 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private boolean waitingForAllModifiersUp = false;
     private int specialKeyCode = KeyEvent.KEYCODE_UNKNOWN;
     private StreamView streamView;
+    private FrameLayout stereoRoot;
+    private FrameLayout leftEyeContainer;
+    private SurfaceView rightEyeSurfaceView;
+    private final Handler rightEyeMirrorHandler = new Handler(Looper.getMainLooper());
+    private Bitmap rightEyeBitmap;
+    private boolean rightEyeMirrorActive;
+    private boolean rightEyeCopyInProgress;
+    private final Rect leftEyeCaptureRect = new Rect();
+    private final Runnable rightEyeMirrorRunnable = new Runnable() {
+        @Override
+        public void run() {
+            if (!rightEyeMirrorActive) {
+                return;
+            }
+
+            mirrorLeftEyeToRightEye();
+            rightEyeMirrorHandler.postDelayed(this, RIGHT_EYE_MIRROR_FRAME_DELAY_MS);
+        }
+    };
     private long lastAbsTouchUpTime = 0;
     private long lastAbsTouchDownTime = 0;
     private float lastAbsTouchUpX, lastAbsTouchUpY;
@@ -236,10 +264,51 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }
 
         // Listen for non-touch events on the game surface
+        stereoRoot = findViewById(R.id.stereoRoot);
+        leftEyeContainer = findViewById(R.id.leftEyeContainer);
+        rightEyeSurfaceView = findViewById(R.id.rightEyeSurfaceView);
         streamView = findViewById(R.id.surfaceView);
         streamView.setOnGenericMotionListener(this);
         streamView.setOnKeyListener(this);
         streamView.setInputCallbacks(this);
+
+        if (stereoRoot != null) {
+            stereoRoot.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+                @Override
+                public void onLayoutChange(View v, int left, int top, int right, int bottom,
+                                           int oldLeft, int oldTop, int oldRight, int oldBottom) {
+                    applyStereoLayout();
+                }
+            });
+            stereoRoot.post(new Runnable() {
+                @Override
+                public void run() {
+                    applyStereoLayout();
+                }
+            });
+        }
+
+        if (rightEyeSurfaceView != null) {
+            rightEyeSurfaceView.getHolder().setFormat(PixelFormat.RGBA_8888);
+            rightEyeSurfaceView.getHolder().addCallback(new SurfaceHolder.Callback() {
+                @Override
+                public void surfaceCreated(SurfaceHolder holder) {
+                    ensureRightEyeBitmap();
+                    startRightEyeMirroring();
+                }
+
+                @Override
+                public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+                    ensureRightEyeBitmap();
+                }
+
+                @Override
+                public void surfaceDestroyed(SurfaceHolder holder) {
+                    stopRightEyeMirroring();
+                    recycleRightEyeBitmap();
+                }
+            });
+        }
 
         // Listen for touch events on the background touch view to enable trackpad mode
         // to work on areas outside of the StreamView itself. We use a separate View
@@ -360,11 +429,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
                 if (!willStreamHdr) {
                     // Nope, no HDR for us :(
-                    Toast.makeText(this, "Display does not support HDR10", Toast.LENGTH_LONG).show();
+                    ToastHelper.show(this, "Display does not support HDR10", ToastHelper.LENGTH_LONG);
                 }
             }
             else {
-                Toast.makeText(this, "HDR requires Android 7.0 or later", Toast.LENGTH_LONG).show();
+                ToastHelper.show(this, "HDR requires Android 7.0 or later", ToastHelper.LENGTH_LONG);
             }
         }
 
@@ -396,17 +465,17 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // Don't stream HDR if the decoder can't support it
         if (willStreamHdr && !decoderRenderer.isHevcMain10Hdr10Supported() && !decoderRenderer.isAv1Main10Supported()) {
             willStreamHdr = false;
-            Toast.makeText(this, "Decoder does not support HDR10 profile", Toast.LENGTH_LONG).show();
+            ToastHelper.show(this, "Decoder does not support HDR10 profile", ToastHelper.LENGTH_LONG);
         }
 
         // Display a message to the user if HEVC was forced on but we still didn't find a decoder
         if (prefConfig.videoFormat == PreferenceConfiguration.FormatOption.FORCE_HEVC && !decoderRenderer.isHevcSupported()) {
-            Toast.makeText(this, "No HEVC decoder found", Toast.LENGTH_LONG).show();
+            ToastHelper.show(this, "No HEVC decoder found", ToastHelper.LENGTH_LONG);
         }
 
         // Display a message to the user if AV1 was forced on but we still didn't find a decoder
         if (prefConfig.videoFormat == PreferenceConfiguration.FormatOption.FORCE_AV1 && !decoderRenderer.isAv1Supported()) {
-            Toast.makeText(this, "No AV1 decoder found", Toast.LENGTH_LONG).show();
+            ToastHelper.show(this, "No AV1 decoder found", ToastHelper.LENGTH_LONG);
         }
 
         // H.264 is always supported
@@ -533,6 +602,158 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         // The connection will be started when the surface gets created
         streamView.getHolder().addCallback(this);
+    }
+
+    private void applyStereoLayout() {
+        if (stereoRoot == null || leftEyeContainer == null || rightEyeSurfaceView == null) {
+            return;
+        }
+
+        int totalStereoWidth = EYE_WIDTH_PX * 2;
+        int leftMargin = Math.max(0, (stereoRoot.getWidth() - totalStereoWidth) / 2);
+        int topMargin = Math.max(0, (stereoRoot.getHeight() - EYE_HEIGHT_PX) / 2);
+
+        FrameLayout.LayoutParams leftParams = (FrameLayout.LayoutParams) leftEyeContainer.getLayoutParams();
+        leftParams.width = EYE_WIDTH_PX;
+        leftParams.height = EYE_HEIGHT_PX;
+        leftParams.leftMargin = leftMargin;
+        leftParams.topMargin = topMargin;
+        leftEyeContainer.setLayoutParams(leftParams);
+
+        FrameLayout.LayoutParams rightParams = (FrameLayout.LayoutParams) rightEyeSurfaceView.getLayoutParams();
+        rightParams.width = EYE_WIDTH_PX;
+        rightParams.height = EYE_HEIGHT_PX;
+        rightParams.leftMargin = leftMargin + EYE_WIDTH_PX;
+        rightParams.topMargin = topMargin;
+        rightEyeSurfaceView.setLayoutParams(rightParams);
+
+        leftEyeCaptureRect.set(
+                leftMargin,
+                topMargin,
+                leftMargin + EYE_WIDTH_PX,
+                topMargin + EYE_HEIGHT_PX
+        );
+    }
+
+    private void ensureRightEyeBitmap() {
+        if (rightEyeSurfaceView == null) {
+            return;
+        }
+
+        int width = rightEyeSurfaceView.getWidth() > 0 ? rightEyeSurfaceView.getWidth() : EYE_WIDTH_PX;
+        int height = rightEyeSurfaceView.getHeight() > 0 ? rightEyeSurfaceView.getHeight() : EYE_HEIGHT_PX;
+
+        if (rightEyeBitmap != null &&
+                !rightEyeBitmap.isRecycled() &&
+                rightEyeBitmap.getWidth() == width &&
+                rightEyeBitmap.getHeight() == height) {
+            return;
+        }
+
+        recycleRightEyeBitmap();
+        rightEyeBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+    }
+
+    private void startRightEyeMirroring() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) {
+            return;
+        }
+
+        if (rightEyeSurfaceView == null || !rightEyeSurfaceView.getHolder().getSurface().isValid()) {
+            return;
+        }
+
+        if (rightEyeMirrorActive) {
+            return;
+        }
+
+        rightEyeMirrorActive = true;
+        rightEyeCopyInProgress = false;
+        rightEyeMirrorHandler.removeCallbacks(rightEyeMirrorRunnable);
+        rightEyeMirrorHandler.post(rightEyeMirrorRunnable);
+    }
+
+    private void stopRightEyeMirroring() {
+        rightEyeMirrorActive = false;
+        rightEyeCopyInProgress = false;
+        rightEyeMirrorHandler.removeCallbacks(rightEyeMirrorRunnable);
+    }
+
+    private void recycleRightEyeBitmap() {
+        if (rightEyeBitmap != null && !rightEyeBitmap.isRecycled()) {
+            rightEyeBitmap.recycle();
+        }
+        rightEyeBitmap = null;
+    }
+
+    @TargetApi(Build.VERSION_CODES.O)
+    private void mirrorLeftEyeToRightEye() {
+        if (!rightEyeMirrorActive || rightEyeCopyInProgress) {
+            return;
+        }
+
+        if (rightEyeSurfaceView == null || leftEyeContainer == null) {
+            return;
+        }
+
+        if (!rightEyeSurfaceView.getHolder().getSurface().isValid()) {
+            return;
+        }
+
+        if (leftEyeCaptureRect.isEmpty()) {
+            applyStereoLayout();
+        }
+
+        ensureRightEyeBitmap();
+        if (rightEyeBitmap == null || rightEyeBitmap.isRecycled()) {
+            return;
+        }
+
+        rightEyeCopyInProgress = true;
+        final Bitmap targetBitmap = rightEyeBitmap;
+
+        try {
+            Surface streamSurface = null;
+            if (connected && streamView != null) {
+                Surface candidateSurface = streamView.getHolder().getSurface();
+                if (candidateSurface != null && candidateSurface.isValid()) {
+                    streamSurface = candidateSurface;
+                }
+            }
+
+            PixelCopy.OnPixelCopyFinishedListener finishListener = copyResult -> {
+                try {
+                    if (copyResult != PixelCopy.SUCCESS || !rightEyeMirrorActive) {
+                        return;
+                    }
+
+                    Canvas canvas = null;
+                    try {
+                        canvas = rightEyeSurfaceView.getHolder().lockCanvas();
+                        if (canvas != null) {
+                            canvas.drawBitmap(targetBitmap, 0f, 0f, null);
+                        }
+                    } catch (Exception e) {
+                        LimeLog.warning("Right eye draw failed: " + e.getMessage());
+                    } finally {
+                        if (canvas != null) {
+                            rightEyeSurfaceView.getHolder().unlockCanvasAndPost(canvas);
+                        }
+                    }
+                } finally {
+                    rightEyeCopyInProgress = false;
+                }
+            };
+
+            if (streamSurface != null) {
+                PixelCopy.request(streamSurface, targetBitmap, finishListener, rightEyeMirrorHandler);
+            } else {
+                PixelCopy.request(getWindow(), leftEyeCaptureRect, targetBitmap, finishListener, rightEyeMirrorHandler);
+            }
+        } catch (IllegalArgumentException e) {
+            rightEyeCopyInProgress = false;
+            LimeLog.warning("PixelCopy request failed: " + e.getMessage());
+        }
     }
 
     private void setPreferredOrientationForCurrentDisplay() {
@@ -943,14 +1164,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             }
         }
 
-        if (prefConfig.stretchVideo || aspectRatioMatch) {
-            // Set the surface to the size of the video
-            streamView.getHolder().setFixedSize(prefConfig.width, prefConfig.height);
-        }
-        else {
-            // Set the surface to scale based on the aspect ratio of the stream
-            streamView.setDesiredAspectRatio((double)prefConfig.width / (double)prefConfig.height);
-        }
+        // Force output render size to one eye so both eyes stay pixel-identical.
+        // We intentionally bypass stream aspect matching here.
+        streamView.setDesiredAspectRatio(0);
+        streamView.getHolder().setFixedSize(EYE_WIDTH_PX, EYE_HEIGHT_PX);
 
         // Set the desired refresh rate that will get passed into setFrameRate() later
         desiredRefreshRate = displayRefreshRate;
@@ -1027,6 +1244,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     protected void onDestroy() {
+        stopRightEyeMirroring();
+        recycleRightEyeBitmap();
+
         super.onDestroy();
 
         if (controllerHandler != null) {
@@ -1054,7 +1274,15 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     @Override
+    protected void onResume() {
+        super.onResume();
+        startRightEyeMirroring();
+    }
+
+    @Override
     protected void onPause() {
+        stopRightEyeMirroring();
+
         if (isFinishing()) {
             // Stop any further input device notifications before we lose focus (and pointer capture)
             if (controllerHandler != null) {
@@ -1124,7 +1352,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 }
 
                 if (message != null) {
-                    Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+                    ToastHelper.show(this, message, ToastHelper.LENGTH_LONG);
                 }
             }
 
@@ -2249,7 +2477,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
                     // If video initialization failed and the surface is still valid, display extra information for the user
                     if (stage.contains("video") && streamView.getHolder().getSurface().isValid()) {
-                        Toast.makeText(Game.this, getResources().getText(R.string.video_decoder_init_failed), Toast.LENGTH_LONG).show();
+                        ToastHelper.show(Game.this, getResources().getText(R.string.video_decoder_init_failed), ToastHelper.LENGTH_LONG);
                     }
 
                     String dialogText = getResources().getString(R.string.conn_error_msg) + " " + stage +" (error "+errorCode+")";
@@ -2436,7 +2664,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                Toast.makeText(Game.this, message, Toast.LENGTH_LONG).show();
+                ToastHelper.show(Game.this, message, ToastHelper.LENGTH_LONG);
             }
         });
     }
@@ -2447,7 +2675,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             runOnUiThread(new Runnable() {
                 @Override
                 public void run() {
-                    Toast.makeText(Game.this, message, Toast.LENGTH_LONG).show();
+                    ToastHelper.show(Game.this, message, ToastHelper.LENGTH_LONG);
                 }
             });
         }
@@ -2674,3 +2902,4 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }
     }
 }
+
