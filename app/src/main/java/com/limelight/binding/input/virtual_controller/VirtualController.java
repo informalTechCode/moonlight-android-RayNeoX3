@@ -1,9 +1,9 @@
 /**
  * Created by Karim Mreisi.
  */
-
 package com.limelight.binding.input.virtual_controller;
 
+import com.limelight.utils.ToastHelper;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
@@ -11,7 +11,6 @@ import android.util.DisplayMetrics;
 import android.view.View;
 import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.Toast;
 
 import com.limelight.LimeLog;
 import com.limelight.R;
@@ -86,7 +85,7 @@ public class VirtualController {
                     message = "Exiting configuration mode";
                 }
 
-                Toast.makeText(context, message, Toast.LENGTH_SHORT).show();
+                ToastHelper.show(context, message, ToastHelper.LENGTH_SHORT);
 
                 buttonConfigure.invalidate();
 
@@ -213,3 +212,4 @@ public class VirtualController {
         handler.postDelayed(delayedRetransmitRunnable, 75);
     }
 }
+

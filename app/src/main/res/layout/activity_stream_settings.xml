@@ -1,8 +1,30 @@
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/stereoRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:id="@+id/stream_settings"
     tools:context=".preferences.StreamSettings">
 
-</RelativeLayout>
+    <FrameLayout
+        android:id="@+id/leftEyeContainer"
+        android:layout_width="640px"
+        android:layout_height="480px"
+        android:layout_gravity="top|start"
+        android:clipChildren="true"
+        android:clipToPadding="true">
+
+        <RelativeLayout
+            android:id="@+id/stream_settings"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+    </FrameLayout>
+
+    <SurfaceView
+        android:id="@+id/rightEyeSurfaceView"
+        android:layout_width="640px"
+        android:layout_height="480px"
+        android:layout_gravity="top|start"
+        android:clickable="false"
+        android:focusable="false" />
+
+</FrameLayout>

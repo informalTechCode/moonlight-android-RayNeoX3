@@ -32,6 +32,7 @@ import com.limelight.PcView;
 import com.limelight.R;
 import com.limelight.binding.video.MediaCodecHelper;
 import com.limelight.utils.Dialog;
+import com.limelight.utils.StereoMirrorController;
 import com.limelight.utils.UiHelper;
 
 import java.lang.reflect.Method;
@@ -40,6 +41,7 @@ import java.util.Arrays;
 public class StreamSettings extends Activity {
     private PreferenceConfiguration previousPrefs;
     private int previousDisplayPixelCount;
+    private StereoMirrorController stereoMirrorController;
 
     // HACK for Android 9
     static DisplayCutout displayCutoutP;
@@ -63,8 +65,34 @@ public class StreamSettings extends Activity {
         UiHelper.setLocale(this);
 
         setContentView(R.layout.activity_stream_settings);
+        stereoMirrorController = StereoMirrorController.attach(this);
 
         UiHelper.notifyNewRootView(this);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (stereoMirrorController != null) {
+            stereoMirrorController.start();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        if (stereoMirrorController != null) {
+            stereoMirrorController.stop();
+        }
+        super.onPause();
+    }
+
+    @Override
+    protected void onDestroy() {
+        if (stereoMirrorController != null) {
+            stereoMirrorController.release();
+            stereoMirrorController = null;
+        }
+        super.onDestroy();
     }
 
     @Override

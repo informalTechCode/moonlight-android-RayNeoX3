@@ -1,31 +1,54 @@
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools"
+    android:id="@+id/stereoRoot"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    tools:context=".AppView" >
+    tools:context=".AppView">
 
     <FrameLayout
-        android:id="@+id/appFragmentContainer"
-        android:layout_width="fill_parent"
-        android:layout_height="wrap_content"
-        android:gravity="center"
-        android:layout_alignParentLeft="true"
-        android:layout_alignParentStart="true"
-        android:layout_alignParentRight="true"
-        android:layout_alignParentEnd="true"
-        android:layout_alignParentBottom="true"
-        android:layout_below="@+id/appListText"/>
-    
-    <TextView
-        android:id="@+id/appListText"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_centerHorizontal="true"
-        android:layout_alignParentTop="true"
-        android:gravity="center"
-        android:paddingTop="5dp"
-        android:paddingBottom="5dp"
-        android:preferKeepClear="true"
-        android:textSize="28sp"/>
+        android:id="@+id/leftEyeContainer"
+        android:layout_width="640px"
+        android:layout_height="480px"
+        android:layout_gravity="top|start"
+        android:clipChildren="true"
+        android:clipToPadding="true">
 
-</RelativeLayout>
+        <RelativeLayout
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <FrameLayout
+                android:id="@+id/appFragmentContainer"
+                android:layout_width="fill_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center"
+                android:layout_alignParentLeft="true"
+                android:layout_alignParentStart="true"
+                android:layout_alignParentRight="true"
+                android:layout_alignParentEnd="true"
+                android:layout_alignParentBottom="true"
+                android:layout_below="@+id/appListText" />
+
+            <TextView
+                android:id="@+id/appListText"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_centerHorizontal="true"
+                android:layout_alignParentTop="true"
+                android:gravity="center"
+                android:paddingTop="5dp"
+                android:paddingBottom="5dp"
+                android:preferKeepClear="true"
+                android:textSize="28sp" />
+        </RelativeLayout>
+    </FrameLayout>
+
+    <SurfaceView
+        android:id="@+id/rightEyeSurfaceView"
+        android:layout_width="640px"
+        android:layout_height="480px"
+        android:layout_gravity="top|start"
+        android:clickable="false"
+        android:focusable="false" />
+
+</FrameLayout>

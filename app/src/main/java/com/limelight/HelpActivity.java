@@ -6,15 +6,19 @@ import android.os.Build;
 import android.os.Bundle;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.widget.FrameLayout;
 import android.window.OnBackInvokedCallback;
 import android.window.OnBackInvokedDispatcher;
 
+import com.limelight.utils.StereoMirrorController;
 import com.limelight.utils.SpinnerDialog;
+import com.limelight.utils.UiHelper;
 
 public class HelpActivity extends Activity {
 
     private SpinnerDialog loadingDialog;
     private WebView webView;
+    private StereoMirrorController stereoMirrorController;
 
     private boolean backCallbackRegistered;
     private OnBackInvokedCallback onBackInvokedCallback;
@@ -22,6 +26,7 @@ public class HelpActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        UiHelper.setLocale(this);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             onBackInvokedCallback = new OnBackInvokedCallback() {
@@ -36,8 +41,20 @@ public class HelpActivity extends Activity {
             };
         }
 
+        setContentView(R.layout.activity_help);
+        UiHelper.notifyNewRootView(this);
+
         webView = new WebView(this);
-        setContentView(webView);
+        FrameLayout leftEyeContainer = findViewById(R.id.leftEyeContainer);
+        leftEyeContainer.addView(webView, new FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+        ));
+
+        stereoMirrorController = StereoMirrorController.attach(this);
+        if (stereoMirrorController != null) {
+            stereoMirrorController.start();
+        }
 
         // These allow the user to zoom the page
         webView.getSettings().setBuiltInZoomControls(true);
@@ -76,6 +93,22 @@ public class HelpActivity extends Activity {
         webView.loadUrl(getIntent().getData().toString());
     }
 
+    @Override
+    protected void onResume() {
+        super.onResume();
+        if (stereoMirrorController != null) {
+            stereoMirrorController.start();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        if (stereoMirrorController != null) {
+            stereoMirrorController.stop();
+        }
+        super.onPause();
+    }
+
     private void refreshBackDispatchState() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (webView.canGoBack() && !backCallbackRegistered) {
@@ -92,6 +125,16 @@ public class HelpActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        if (stereoMirrorController != null) {
+            stereoMirrorController.release();
+            stereoMirrorController = null;
+        }
+
+        if (webView != null) {
+            webView.destroy();
+            webView = null;
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (backCallbackRegistered) {
                 getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(onBackInvokedCallback);

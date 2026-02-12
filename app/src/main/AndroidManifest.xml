@@ -70,6 +70,9 @@
         <meta-data
             android:name="com.sec.android.support.multiwindow"
             android:value="true" />
+        <meta-data
+            android:name="com.rayneo.mercury.app"
+            android:value="true" />
 
         <!-- Disable Game Mode downscaling since it can break our UI dialogs and doesn't benefit
              performance much for us since we don't use GL/Vulkan for rendering anyway -->

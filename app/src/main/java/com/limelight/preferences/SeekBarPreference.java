@@ -1,15 +1,17 @@
 package com.limelight.preferences;
 
-import android.app.AlertDialog;
+import android.app.Activity;
 import android.content.Context;
 import android.os.Bundle;
 import android.preference.DialogPreference;
 import android.util.AttributeSet;
-import android.util.Log;
+import android.graphics.Color;
 import android.view.Gravity;
+import android.util.TypedValue;
 import android.view.View;
-import android.view.View.OnClickListener;
+import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -174,20 +176,81 @@ public class SeekBarPreference extends DialogPreference
 
     @Override
     public void showDialog(Bundle state) {
-        super.showDialog(state);
+        if (!(context instanceof Activity)) {
+            return;
+        }
 
-        Button positiveButton = ((AlertDialog) getDialog()).getButton(AlertDialog.BUTTON_POSITIVE);
-        positiveButton.setOnClickListener(new OnClickListener() {
-            @Override
-            public void onClick(View view) {
-                if (shouldPersist()) {
-                    currentValue = seekBar.getProgress();
-                    persistInt(seekBar.getProgress());
-                    callChangeListener(seekBar.getProgress());
-                }
+        final Activity activity = (Activity) context;
+        ViewGroup dialogContainer = activity.findViewById(com.limelight.R.id.leftEyeContainer);
+        if (dialogContainer == null) {
+            dialogContainer = activity.findViewById(android.R.id.content);
+        }
+        if (dialogContainer == null) {
+            return;
+        }
+        final ViewGroup container = dialogContainer;
 
-                getDialog().dismiss();
+        final FrameLayout scrim = new FrameLayout(context);
+        scrim.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        scrim.setBackgroundColor(0xB0000000);
+        scrim.setClickable(true);
+        scrim.setFocusable(true);
+
+        int panelWidth = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 560,
+                activity.getResources().getDisplayMetrics());
+
+        LinearLayout panel = new LinearLayout(context);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackgroundColor(Color.parseColor("#424242"));
+        panel.setPadding(dp(20), dp(16), dp(20), dp(12));
+        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
+                panelWidth, ViewGroup.LayoutParams.WRAP_CONTENT);
+        panelParams.gravity = Gravity.CENTER;
+        panel.setLayoutParams(panelParams);
+
+        View dialogContent = onCreateDialogView();
+        onBindDialogView(dialogContent);
+        panel.addView(dialogContent);
+
+        LinearLayout buttons = new LinearLayout(context);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setGravity(Gravity.END);
+        LinearLayout.LayoutParams buttonsParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        buttonsParams.topMargin = dp(14);
+        buttons.setLayoutParams(buttonsParams);
+
+        Button cancelButton = new Button(context);
+        cancelButton.setText(android.R.string.cancel);
+        cancelButton.setOnClickListener(v -> container.removeView(scrim));
+        buttons.addView(cancelButton);
+
+        Button okButton = new Button(context);
+        okButton.setText(android.R.string.ok);
+        LinearLayout.LayoutParams okParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        okParams.leftMargin = dp(10);
+        okButton.setLayoutParams(okParams);
+        okButton.setOnClickListener(v -> {
+            if (shouldPersist()) {
+                currentValue = seekBar.getProgress();
+                persistInt(seekBar.getProgress());
+                callChangeListener(seekBar.getProgress());
             }
+            container.removeView(scrim);
         });
+        buttons.addView(okButton);
+
+        panel.addView(buttons);
+        scrim.addView(panel);
+        container.addView(scrim);
+        okButton.requestFocus();
+    }
+
+    private int dp(int value) {
+        return (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, value, context.getResources().getDisplayMetrics());
     }
 }

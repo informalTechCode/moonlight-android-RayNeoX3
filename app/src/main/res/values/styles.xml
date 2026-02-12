@@ -13,6 +13,14 @@
             backward-compatibility can go here.
 
         -->
+        <item name="android:alertDialogTheme">@style/MoonlightAlertDialogTheme</item>
+        <item name="android:dialogTheme">@style/MoonlightDialogTheme</item>
+    </style>
+
+    <style name="MoonlightAlertDialogTheme" parent="android:Theme.Dialog">
+    </style>
+
+    <style name="MoonlightDialogTheme" parent="android:Theme.Dialog">
     </style>
 
     <!-- Application theme. -->

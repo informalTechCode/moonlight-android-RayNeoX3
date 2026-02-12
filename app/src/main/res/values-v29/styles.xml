@@ -4,5 +4,19 @@
         <item name="android:statusBarColor">@android:color/transparent</item>
         <!-- Avoid some systems like MIUI which break the visibility of games title -->
         <item name="android:forceDarkAllowed">false</item>
+        <item name="android:alertDialogTheme">@style/MoonlightAlertDialogTheme</item>
+        <item name="android:dialogTheme">@style/MoonlightDialogTheme</item>
+    </style>
+
+    <style name="MoonlightAlertDialogTheme" parent="android:Theme.Material.Dialog">
+        <item name="android:colorAccent">#80CBC4</item>
+        <item name="android:textColorPrimary">#FFFFFFFF</item>
+        <item name="android:textColorSecondary">#FFD0D0D0</item>
+    </style>
+
+    <style name="MoonlightDialogTheme" parent="android:Theme.Material.Dialog">
+        <item name="android:colorAccent">#80CBC4</item>
+        <item name="android:textColorPrimary">#FFFFFFFF</item>
+        <item name="android:textColorSecondary">#FFD0D0D0</item>
     </style>
 </resources>

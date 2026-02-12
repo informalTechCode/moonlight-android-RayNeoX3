@@ -3,9 +3,15 @@ package com.limelight.utils;
 import java.util.ArrayList;
 
 import android.app.Activity;
-import android.app.AlertDialog;
-import android.content.DialogInterface;
+import android.graphics.Color;
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 
 import com.limelight.R;
 
@@ -15,7 +21,7 @@ public class Dialog implements Runnable {
     private final Activity activity;
     private final Runnable runOnDismiss;
 
-    private AlertDialog alert;
+    private View overlayView;
 
     private static final ArrayList<Dialog> rundownDialogs = new ArrayList<>();
 
@@ -31,8 +37,11 @@ public class Dialog implements Runnable {
     {
         synchronized (rundownDialogs) {
             for (Dialog d : rundownDialogs) {
-                if (d.alert.isShowing()) {
-                    d.alert.dismiss();
+                if (d.overlayView != null) {
+                    ViewGroup parent = (ViewGroup) d.overlayView.getParent();
+                    if (parent != null) {
+                        parent.removeView(d.overlayView);
+                    }
                 }
             }
 
@@ -60,54 +69,111 @@ public class Dialog implements Runnable {
     @Override
     public void run() {
         // If we're dying, don't bother creating a dialog
-        if (activity.isFinishing())
+        if (activity.isFinishing()) {
             return;
+        }
 
-        alert = new AlertDialog.Builder(activity).create();
+        ViewGroup container = activity.findViewById(R.id.leftEyeContainer);
+        if (container == null) {
+            container = activity.findViewById(android.R.id.content);
+        }
 
-        alert.setTitle(title);
-        alert.setMessage(message);
-        alert.setCancelable(false);
-        alert.setCanceledOnTouchOutside(false);
- 
-        alert.setButton(AlertDialog.BUTTON_POSITIVE, activity.getResources().getText(android.R.string.ok), new DialogInterface.OnClickListener() {
-              public void onClick(DialogInterface dialog, int which) {
-                  synchronized (rundownDialogs) {
-                      rundownDialogs.remove(Dialog.this);
-                      alert.dismiss();
-                  }
+        if (container != null) {
+            showOverlay(container);
+        }
+    }
 
-                  runOnDismiss.run();
-              }
+    private void showOverlay(final ViewGroup container) {
+        FrameLayout scrim = new FrameLayout(activity);
+        scrim.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        scrim.setBackgroundColor(0xB0000000);
+        scrim.setClickable(true);
+        scrim.setFocusable(true);
+
+        int panelWidth = (int) TypedValue.applyDimension(TypedValue.COMPLEX_UNIT_DIP, 560,
+                activity.getResources().getDisplayMetrics());
+
+        LinearLayout panel = new LinearLayout(activity);
+        panel.setOrientation(LinearLayout.VERTICAL);
+        panel.setBackgroundColor(Color.parseColor("#424242"));
+        panel.setPadding(dp(20), dp(16), dp(20), dp(12));
+        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
+                panelWidth, ViewGroup.LayoutParams.WRAP_CONTENT);
+        panelParams.gravity = Gravity.CENTER;
+        panel.setLayoutParams(panelParams);
+
+        TextView titleView = new TextView(activity);
+        titleView.setText(title);
+        titleView.setTextColor(Color.WHITE);
+        titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 20);
+        panel.addView(titleView);
+
+        TextView messageView = new TextView(activity);
+        messageView.setText(message);
+        messageView.setTextColor(Color.WHITE);
+        messageView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 16);
+        LinearLayout.LayoutParams msgParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        msgParams.topMargin = dp(10);
+        messageView.setLayoutParams(msgParams);
+        panel.addView(messageView);
+
+        LinearLayout buttons = new LinearLayout(activity);
+        buttons.setOrientation(LinearLayout.HORIZONTAL);
+        buttons.setGravity(Gravity.END);
+        LinearLayout.LayoutParams buttonsParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        buttonsParams.topMargin = dp(14);
+        buttons.setLayoutParams(buttonsParams);
+
+        Button helpButton = new Button(activity);
+        helpButton.setText(activity.getResources().getText(R.string.help));
+        helpButton.setOnClickListener(v -> {
+            dismissOverlay(container);
+            runOnDismiss.run();
+            HelpLauncher.launchTroubleshooting(activity);
         });
-        alert.setButton(AlertDialog.BUTTON_NEUTRAL, activity.getResources().getText(R.string.help), new DialogInterface.OnClickListener() {
-            public void onClick(DialogInterface dialog, int which) {
-                synchronized (rundownDialogs) {
-                    rundownDialogs.remove(Dialog.this);
-                    alert.dismiss();
-                }
+        buttons.addView(helpButton);
 
-                runOnDismiss.run();
-
-                HelpLauncher.launchTroubleshooting(activity);
-            }
+        Button okButton = new Button(activity);
+        okButton.setText(activity.getResources().getText(android.R.string.ok));
+        okButton.setOnClickListener(v -> {
+            dismissOverlay(container);
+            runOnDismiss.run();
         });
-        alert.setOnShowListener(new DialogInterface.OnShowListener(){
+        LinearLayout.LayoutParams okParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        okParams.leftMargin = dp(10);
+        okButton.setLayoutParams(okParams);
+        buttons.addView(okButton);
 
-            @Override
-            public void onShow(DialogInterface dialog) {
-                // Set focus to the OK button by default
-                Button button = alert.getButton(AlertDialog.BUTTON_POSITIVE);
-                button.setFocusable(true);
-                button.setFocusableInTouchMode(true);
-                button.requestFocus();
-            }
-        });
+        panel.addView(buttons);
+        scrim.addView(panel);
 
         synchronized (rundownDialogs) {
+            overlayView = scrim;
             rundownDialogs.add(this);
-            alert.show();
+            container.addView(scrim);
         }
+
+        okButton.requestFocus();
+    }
+
+    private void dismissOverlay(ViewGroup container) {
+        synchronized (rundownDialogs) {
+            rundownDialogs.remove(this);
+            if (overlayView != null) {
+                container.removeView(overlayView);
+                overlayView = null;
+            }
+        }
+    }
+
+    private int dp(int value) {
+        return (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, value, activity.getResources().getDisplayMetrics());
     }
 
 }

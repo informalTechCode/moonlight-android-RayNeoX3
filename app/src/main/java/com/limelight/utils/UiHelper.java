@@ -1,13 +1,11 @@
 package com.limelight.utils;
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.app.GameManager;
 import android.app.GameState;
 import android.app.LocaleManager;
 import android.app.UiModeManager;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.content.SharedPreferences;
 import android.content.res.Configuration;
 import android.graphics.Insets;
@@ -205,57 +203,24 @@ public class UiHelper {
     }
 
     public static void displayQuitConfirmationDialog(Activity parent, final Runnable onYes, final Runnable onNo) {
-        DialogInterface.OnClickListener dialogClickListener = new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                switch (which){
-                    case DialogInterface.BUTTON_POSITIVE:
-                        if (onYes != null) {
-                            onYes.run();
-                        }
-                        break;
-
-                    case DialogInterface.BUTTON_NEGATIVE:
-                        if (onNo != null) {
-                            onNo.run();
-                        }
-                        break;
-                }
-            }
-        };
-
-        AlertDialog.Builder builder = new AlertDialog.Builder(parent);
-        builder.setMessage(parent.getResources().getString(R.string.applist_quit_confirmation))
-                .setPositiveButton(parent.getResources().getString(R.string.yes), dialogClickListener)
-                .setNegativeButton(parent.getResources().getString(R.string.no), dialogClickListener)
-                .show();
+        ConfirmationDialog.displayDialog(
+                parent,
+                "",
+                parent.getResources().getString(R.string.applist_quit_confirmation),
+                parent.getResources().getString(R.string.yes),
+                parent.getResources().getString(R.string.no),
+                onYes,
+                onNo);
     }
 
     public static void displayDeletePcConfirmationDialog(Activity parent, ComputerDetails computer, final Runnable onYes, final Runnable onNo) {
-        DialogInterface.OnClickListener dialogClickListener = new DialogInterface.OnClickListener() {
-            @Override
-            public void onClick(DialogInterface dialog, int which) {
-                switch (which){
-                    case DialogInterface.BUTTON_POSITIVE:
-                        if (onYes != null) {
-                            onYes.run();
-                        }
-                        break;
-
-                    case DialogInterface.BUTTON_NEGATIVE:
-                        if (onNo != null) {
-                            onNo.run();
-                        }
-                        break;
-                }
-            }
-        };
-
-        AlertDialog.Builder builder = new AlertDialog.Builder(parent);
-        builder.setMessage(parent.getResources().getString(R.string.delete_pc_msg))
-                .setTitle(computer.name)
-                .setPositiveButton(parent.getResources().getString(R.string.yes), dialogClickListener)
-                .setNegativeButton(parent.getResources().getString(R.string.no), dialogClickListener)
-                .show();
+        ConfirmationDialog.displayDialog(
+                parent,
+                computer.name,
+                parent.getResources().getString(R.string.delete_pc_msg),
+                parent.getResources().getString(R.string.yes),
+                parent.getResources().getString(R.string.no),
+                onYes,
+                onNo);
     }
 }

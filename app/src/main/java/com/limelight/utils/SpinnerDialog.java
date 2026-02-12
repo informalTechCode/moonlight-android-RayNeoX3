@@ -4,15 +4,24 @@ import java.util.ArrayList;
 import java.util.Iterator;
 
 import android.app.Activity;
-import android.app.ProgressDialog;
-import android.content.DialogInterface;
-import android.content.DialogInterface.OnCancelListener;
+import android.graphics.Color;
+import android.util.TypedValue;
+import android.view.Gravity;
+import android.view.View;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.LinearLayout;
+import android.widget.ProgressBar;
+import android.widget.TextView;
 
-public class SpinnerDialog implements Runnable,OnCancelListener {
+import com.limelight.R;
+
+public class SpinnerDialog implements Runnable {
     private final String title;
     private final String message;
     private final Activity activity;
-    private ProgressDialog progress;
+    private View overlayView;
+    private TextView overlayMessageView;
     private final boolean finish;
 
     private static final ArrayList<SpinnerDialog> rundownDialogs = new ArrayList<>();
@@ -22,7 +31,6 @@ public class SpinnerDialog implements Runnable,OnCancelListener {
         this.activity = activity;
         this.title = title;
         this.message = message;
-        this.progress = null;
         this.finish = finish;
     }
 
@@ -41,8 +49,13 @@ public class SpinnerDialog implements Runnable,OnCancelListener {
                 SpinnerDialog dialog = i.next();
                 if (dialog.activity == activity) {
                     i.remove();
-                    if (dialog.progress.isShowing()) {
-                        dialog.progress.dismiss();
+                    if (dialog.overlayView != null) {
+                        ViewGroup parent = (ViewGroup) dialog.overlayView.getParent();
+                        if (parent != null) {
+                            parent.removeView(dialog.overlayView);
+                        }
+                        dialog.overlayView = null;
+                        dialog.overlayMessageView = null;
                     }
                 }
             }
@@ -51,7 +64,7 @@ public class SpinnerDialog implements Runnable,OnCancelListener {
 
     public void dismiss()
     {
-        // Running again with progress != null will destroy it
+        // Running again with overlayView != null will destroy it
         activity.runOnUiThread(this);
     }
 
@@ -60,61 +73,115 @@ public class SpinnerDialog implements Runnable,OnCancelListener {
         activity.runOnUiThread(new Runnable() {
             @Override
             public void run() {
-                progress.setMessage(message);
+                if (overlayMessageView != null) {
+                    overlayMessageView.setText(message);
+                }
             }
         });
     }
 
     @Override
     public void run() {
-
         // If we're dying, don't bother doing anything
         if (activity.isFinishing()) {
             return;
         }
 
-        if (progress == null)
-        {
-            progress = new ProgressDialog(activity);
-
-            progress.setTitle(title);
-            progress.setMessage(message);
-            progress.setProgressStyle(ProgressDialog.STYLE_SPINNER);
-            progress.setOnCancelListener(this);
-
-            // If we want to finish the activity when this is killed, make it cancellable
-            if (finish)
-            {
-                progress.setCancelable(true);
-                progress.setCanceledOnTouchOutside(false);
-            }
-            else
-            {
-                progress.setCancelable(false);
+        if (overlayView == null) {
+            ViewGroup container = activity.findViewById(R.id.leftEyeContainer);
+            if (container == null) {
+                container = activity.findViewById(android.R.id.content);
             }
 
-            synchronized (rundownDialogs) {
-                rundownDialogs.add(this);
-                progress.show();
+            if (container == null) {
+                return;
             }
+
+            showOverlay(container);
         }
-        else
-        {
+        else {
             synchronized (rundownDialogs) {
-                if (rundownDialogs.remove(this) && progress.isShowing()) {
-                    progress.dismiss();
+                if (rundownDialogs.remove(this) && overlayView != null) {
+                    ViewGroup parent = (ViewGroup) overlayView.getParent();
+                    if (parent != null) {
+                        parent.removeView(overlayView);
+                    }
+                    overlayView = null;
+                    overlayMessageView = null;
                 }
             }
         }
     }
 
-    @Override
-    public void onCancel(DialogInterface dialog) {
-        synchronized (rundownDialogs) {
-            rundownDialogs.remove(this);
+    private void showOverlay(final ViewGroup container) {
+        FrameLayout scrim = new FrameLayout(activity);
+        scrim.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT));
+        scrim.setBackgroundColor(0x88000000);
+        scrim.setClickable(true);
+        scrim.setFocusable(true);
+
+        LinearLayout panel = new LinearLayout(activity);
+        panel.setOrientation(LinearLayout.HORIZONTAL);
+        panel.setGravity(Gravity.CENTER_VERTICAL);
+        panel.setBackgroundColor(Color.parseColor("#424242"));
+        panel.setPadding(dp(18), dp(14), dp(18), dp(14));
+
+        FrameLayout.LayoutParams panelParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        panelParams.gravity = Gravity.CENTER;
+        panel.setLayoutParams(panelParams);
+
+        ProgressBar spinner = new ProgressBar(activity);
+        panel.addView(spinner);
+
+        LinearLayout textWrap = new LinearLayout(activity);
+        textWrap.setOrientation(LinearLayout.VERTICAL);
+        LinearLayout.LayoutParams textWrapParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        textWrapParams.leftMargin = dp(12);
+        textWrap.setLayoutParams(textWrapParams);
+
+        TextView titleView = new TextView(activity);
+        titleView.setText(title);
+        titleView.setTextColor(Color.WHITE);
+        titleView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 18);
+        textWrap.addView(titleView);
+
+        overlayMessageView = new TextView(activity);
+        overlayMessageView.setText(message);
+        overlayMessageView.setTextColor(Color.WHITE);
+        overlayMessageView.setTextSize(TypedValue.COMPLEX_UNIT_SP, 14);
+        textWrap.addView(overlayMessageView);
+
+        panel.addView(textWrap);
+        scrim.addView(panel);
+
+        if (finish) {
+            scrim.setOnClickListener(v -> {
+                synchronized (rundownDialogs) {
+                    rundownDialogs.remove(this);
+                }
+                ViewGroup parent = (ViewGroup) scrim.getParent();
+                if (parent != null) {
+                    parent.removeView(scrim);
+                }
+                overlayView = null;
+                overlayMessageView = null;
+                activity.finish();
+            });
         }
 
-        // This will only be called if finish was true, so we don't need to check again
-        activity.finish();
+        synchronized (rundownDialogs) {
+            overlayView = scrim;
+            rundownDialogs.add(this);
+            container.addView(scrim);
+        }
+    }
+
+    private int dp(int value) {
+        return (int) TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP, value, activity.getResources().getDisplayMetrics());
     }
 }
