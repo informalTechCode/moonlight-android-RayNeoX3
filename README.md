@@ -23,7 +23,7 @@ This fork includes platform-specific changes for RayNeo X3 Pro compatibility:
 
 These changes are focused on making day-to-day navigation and streaming workflows practical on RayNeo X3 Pro.
 
-## Downloads
+## Downloads for original moonlight
 * [Google Play Store](https://play.google.com/store/apps/details?id=com.limelight)
 * [Amazon App Store](https://www.amazon.com/gp/product/B00JK4MFN2)
 * [F-Droid](https://f-droid.org/packages/com.limelight)
